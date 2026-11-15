@@ -1,6 +1,7 @@
 """Translate gateway datums to trainer batches and sampling requests to SGLang."""
 
 import asyncio
+import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import TextIO
@@ -116,6 +117,26 @@ def resolve_adapter(root: str, name: str, tenant: str, model_id: str) -> dict | 
         "path": str(committed.path),
         "lora_name": format_sglang_lora_name(model_id, name, committed.commit_id),
         "parametrization": asdict(parametrization),
+    }
+
+
+def resolve_full_checkpoint(root: str, name: str, tenant: str, model_id: str) -> dict | None:
+    """A committed full checkpoint (``is_lora`` false); a LoRA one is refused on this gateway."""
+    try:
+        committed = resolve_adapter_dir(Path(root), name, tenant=tenant)
+        if committed is None:
+            return None
+        parametrization = json.loads((committed.path / PARAMETRIZATION_FILENAME).read_text())
+    except AdapterOwnershipError as error:
+        raise OwnershipError(f"checkpoint {name!r} does not belong to this tenant") from error
+    except (OSError, ValueError) as error:
+        raise UserInputError(f"cannot read checkpoint {name!r}: {error}") from error
+    if parametrization.get("is_lora", True):
+        raise UserInputError(f"checkpoint {name!r} is a LoRA checkpoint; this gateway trains full models")
+    return {
+        "path": str(committed.path),
+        "lora_name": format_sglang_lora_name(model_id, name, committed.commit_id),
+        "parametrization": parametrization,
     }
 
 

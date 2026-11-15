@@ -53,7 +53,10 @@ def test_loss_passes_return_independent_detached_outputs(monkeypatch, recompute)
         assert not outputs[0]["logprobs"].requires_grad
 
 
-@pytest.mark.parametrize("loss_fn", sorted(tinker_losses.TINKER_LOSS_FUNCTIONS))
+# lab losses (gumbel_match, reliquary_gate) need draw inputs; they have their own tests
+@pytest.mark.parametrize(
+    "loss_fn", sorted(set(tinker_losses.TINKER_LOSS_FUNCTIONS) - {"gumbel_match", "reliquary_gate"})
+)
 def test_a_zero_loss_mask_removes_the_datum_from_every_objective(monkeypatch, loss_fn):
     make_parallel_state()
     logprobs = torch.tensor([-0.5, -0.25], requires_grad=True)

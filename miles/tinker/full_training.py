@@ -1,15 +1,9 @@
 """Full checkpoints share one inference fleet, with snapshot switches serialized."""
 
 import asyncio
-import json
 import os
-from pathlib import Path
 
-from miles.backends.training_utils.checkpoint.adapter.commit import OwnershipError as AdapterOwnershipError
-from miles.backends.training_utils.checkpoint.adapter.commit import format_sglang_lora_name, resolve_adapter_dir
-from miles.backends.training_utils.checkpoint.adapter.parametrization import PARAMETRIZATION_FILENAME
-from miles.tinker.core.types import OwnershipError, UserInputError
-from miles.tinker.runtime import MilesBackend
+from miles.tinker.runtime import MilesBackend, resolve_full_checkpoint
 
 HF_SUBDIR = "hf"  # miles.backends.megatron_utils.full_training.actor.HF_SUBDIR (not imported: no megatron here)
 
@@ -25,25 +19,7 @@ class FullTrainingBackend(MilesBackend):
     def lora_groups(self, target_modules) -> dict[str, bool]:
         return {"train_attn": True, "train_mlp": True, "train_unembed": True}
 
-    @staticmethod
-    def resolve_adapter(root: str, name: str, tenant: str, model_id: str) -> dict | None:
-        """A committed full checkpoint (``is_lora`` false); a LoRA one is refused on this gateway."""
-        try:
-            committed = resolve_adapter_dir(Path(root), name, tenant=tenant)
-            if committed is None:
-                return None
-            parametrization = json.loads((committed.path / PARAMETRIZATION_FILENAME).read_text())
-        except AdapterOwnershipError as error:
-            raise OwnershipError(f"checkpoint {name!r} does not belong to this tenant") from error
-        except (OSError, ValueError) as error:
-            raise UserInputError(f"cannot read checkpoint {name!r}: {error}") from error
-        if parametrization.get("is_lora", True):
-            raise UserInputError(f"checkpoint {name!r} is a LoRA checkpoint; this gateway trains full models")
-        return {
-            "path": str(committed.path),
-            "lora_name": format_sglang_lora_name(model_id, name, committed.commit_id),
-            "parametrization": parametrization,
-        }
+    resolve_adapter = staticmethod(resolve_full_checkpoint)
 
     async def sample(self, payload: dict, lora_name: str | None, lora_path: str | None = None) -> dict:
         async with self._sampling_lock:
