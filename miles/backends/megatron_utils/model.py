@@ -548,12 +548,15 @@ def run_forward_backward_pass(
             if (x := batch["multimodal_train_inputs"]) is not None:
                 forward_kwargs.update(x)
 
-            output_tensor = model(
-                **forward_kwargs,
-                # v* is decided on fp32 logits: their bf16 rounding flips Gumbel picks
-                fp32_output=batch.get("loss_fn") == "gumbel_match"
-                or args.loss_type not in ("policy_loss", "sft_loss", "score_centering"),
-            )
+            from miles.backends.training_utils.loss.hub.gumbel_match import fp32_output_layer
+
+            with fp32_output_layer(model, enabled=batch.get("loss_fn") == "gumbel_match"):
+                output_tensor = model(
+                    **forward_kwargs,
+                    # v* is decided on fp32 logits: their bf16 rounding flips Gumbel picks
+                    fp32_output=batch.get("loss_fn") == "gumbel_match"
+                    or args.loss_type not in ("policy_loss", "sft_loss", "score_centering"),
+                )
 
         for m, old_stage in zip(all_replay_managers, old_stages, strict=True):
             m.stage = old_stage

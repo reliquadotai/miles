@@ -146,3 +146,69 @@ def gumbel_match_loss_function(args, batch, logits, sum_of_sample_mean):
         output["vstar"] = vstar
         output["match"] = (vstar == targets).float()
     return loss, log
+
+
+def _output_linears(model) -> list:
+    """The vocab-parallel output projection(s) of a Megatron model (list of chunks), innermost module only."""
+    from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+
+    chunks = model if isinstance(model, (list, tuple)) else [model]
+    found = []
+    for chunk in chunks:
+        for name, module in chunk.named_modules():
+            if "output_layer" in name.split(".")[-2:] or name.endswith("output_layer"):
+                if isinstance(module, ColumnParallelLinear):
+                    found.append(module)
+    return found
+
+
+class fp32_output_layer:
+    """While active, the output projection computes ``fp32(h) @ fp32(W)`` in exact fp32 (TF32 off): the miners'
+    ``head_dtype=float32`` head, so v* is decided on the logits the draw saw, not on bf16-rounded ones."""
+
+    def __init__(self, model, enabled: bool):
+        self.model, self.enabled, self.saved = model, enabled, []
+
+    def __enter__(self):
+        if not self.enabled:
+            return self
+        from megatron.core.tensor_parallel.mappings import (
+            copy_to_tensor_model_parallel_region,
+            gather_from_sequence_parallel_region,
+        )
+
+        linears = _output_linears(self.model)
+        if not linears:
+            raise RuntimeError("gumbel_match: no output_layer ColumnParallelLinear found for the fp32 head")
+        for linear in linears:
+            original = linear.forward
+
+            def forward(input_, weight=None, runtime_gather_output=None, _linear=linear, **kwargs):
+                if kwargs:
+                    raise RuntimeError(f"gumbel_match fp32 head: unexpected output_layer args {sorted(kwargs)}")
+                w = _linear.weight if weight is None else weight
+                group = getattr(_linear, "tp_group", None)
+                if _linear.sequence_parallel:
+                    x = gather_from_sequence_parallel_region(input_, group=group)
+                else:
+                    x = copy_to_tensor_model_parallel_region(input_, group=group)
+                previous = torch.backends.cuda.matmul.allow_tf32
+                torch.backends.cuda.matmul.allow_tf32 = False
+                try:
+                    out = torch.nn.functional.linear(x.float(), w.float())
+                finally:
+                    torch.backends.cuda.matmul.allow_tf32 = previous
+                gather = _linear.gather_output if runtime_gather_output is None else runtime_gather_output
+                if gather:
+                    raise RuntimeError("gumbel_match fp32 head: gathered output is not supported")
+                return out, None
+
+            self.saved.append((linear, original))
+            linear.forward = forward
+        return self
+
+    def __exit__(self, *exc):
+        for linear, original in self.saved:
+            linear.forward = original
+        self.saved = []
+        return False
