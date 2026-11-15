@@ -44,6 +44,7 @@ def validate_batch_payload(op: CommandOp, payload: dict, config: GatewayConfig) 
             "ppo": ("clip_low_threshold", "clip_high_threshold"),
             "cispo": ("clip_low_threshold", "clip_high_threshold"),
             "dro": ("beta",),
+            "gumbel_match": ("temperature",),
         }.get(payload["loss_fn"], ())
         for key in config_keys:
             if key in loss_fn_config:

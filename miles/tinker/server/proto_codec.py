@@ -3,7 +3,7 @@
 import numpy as np
 
 from miles.tinker.core.types import UserInputError
-from miles.tinker.server.encoding import build_datum
+from miles.tinker.server.encoding import EXTRA_OUTPUTS, build_datum
 from tinker.proto import tinker_public_pb2 as public_pb
 
 PROTO_CONTENT_TYPE = "application/x-protobuf"
@@ -100,12 +100,17 @@ def encode_forward_backward_output(result: dict) -> bytes:
 
     record = message.loss_fn_outputs.add()
     record.num_datums = len(outputs)
-    for field, arrays in (
-        ("loss:sum", [np.asarray([output["loss"]], dtype=np.float32) for output in outputs]),
-        ("logprobs", [np.asarray(output["logprobs"], dtype=np.float32) for output in outputs]),
-    ):
+    fields = [
+        ("loss:sum", np.float32, [np.asarray([output["loss"]], dtype=np.float32) for output in outputs]),
+        ("logprobs", np.float32, [np.asarray(output["logprobs"], dtype=np.float32) for output in outputs]),
+    ]
+    for key, dtype in EXTRA_OUTPUTS.items():
+        if outputs and all(key in output for output in outputs):
+            np_dtype = np.dtype(dtype)
+            fields.append((key, np_dtype, [np.asarray(output[key], dtype=np_dtype) for output in outputs]))
+    for field, np_dtype, arrays in fields:
         batched = record.fields[field]
-        batched.dtype = public_pb.DTYPE_FLOAT32
+        batched.dtype = public_pb.DTYPE_INT64 if np.dtype(np_dtype) == np.int64 else public_pb.DTYPE_FLOAT32
         offsets = np.zeros(len(arrays) + 1, dtype=np.int64)
         np.cumsum([array.nbytes for array in arrays], out=offsets[1:])
         batched.offsets = offsets.tobytes()

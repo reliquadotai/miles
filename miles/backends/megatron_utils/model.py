@@ -501,6 +501,7 @@ def run_forward_backward_pass(
                 "opd_reverse_kl",
                 "rollout_mask_sums",
                 "loss_weights",
+                "draw_keys",
                 "target_tokens",
                 "sample_indices",
                 *sampling_mask_keys,
@@ -548,7 +549,10 @@ def run_forward_backward_pass(
                 forward_kwargs.update(x)
 
             output_tensor = model(
-                **forward_kwargs, fp32_output=args.loss_type not in ("policy_loss", "sft_loss", "score_centering")
+                **forward_kwargs,
+                # v* is decided on fp32 logits: their bf16 rounding flips Gumbel picks
+                fp32_output=batch.get("loss_fn") == "gumbel_match"
+                or args.loss_type not in ("policy_loss", "sft_loss", "score_centering"),
             )
 
         for m, old_stage in zip(all_replay_managers, old_stages, strict=True):

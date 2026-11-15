@@ -243,3 +243,12 @@ TINKER_LOSS_FUNCTIONS = {
     "cispo": cispo_loss_function,
     "dro": dro_loss_function,
 }
+
+
+def gumbel_match_loss_function(args, batch, logits, sum_of_sample_mean):
+    from miles.backends.training_utils.loss.hub.gumbel_match import gumbel_match_loss_function as loss
+
+    return loss(args, batch, logits, sum_of_sample_mean)
+
+
+TINKER_LOSS_FUNCTIONS["gumbel_match"] = gumbel_match_loss_function

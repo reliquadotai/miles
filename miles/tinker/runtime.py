@@ -33,7 +33,12 @@ from miles.utils.lora.utils import matches_lora_target
 from tinker.types.topk_logprobs import MASK_LOGPROB
 
 # internal datum key -> trainer batch key
-DATUM_TO_BATCH_KEYS = {"weights": "loss_weights", "advantages": "advantages", "sampling_logprobs": "rollout_log_probs"}
+DATUM_TO_BATCH_KEYS = {
+    "weights": "loss_weights",
+    "advantages": "advantages",
+    "sampling_logprobs": "rollout_log_probs",
+    "draw_keys": "draw_keys",
+}
 
 
 def _pad_to_dp_multiple(slot_datums: list, dp_size: int) -> list:
@@ -212,6 +217,7 @@ class MilesBackend:
                     by_index[index] = {
                         "loss": float(datum_output["loss"]),
                         "logprobs": datum_output["logprobs"].tolist(),
+                        **{key: datum_output[key].tolist() for key in ("vstar", "match") if key in datum_output},
                     }
         return [by_index[index] for index in range(len(slot_datums))]
 

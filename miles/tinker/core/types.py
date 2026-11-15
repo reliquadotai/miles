@@ -29,7 +29,14 @@ class CommandOp(str, Enum):
 
 
 # wire loss_fn_inputs key -> internal datum key
-LOSS_INPUT_KEYS = {"weights": "weights", "advantages": "advantages", "logprobs": "sampling_logprobs"}
+LOSS_INPUT_KEYS = {
+    "weights": "weights",
+    "advantages": "advantages",
+    "logprobs": "sampling_logprobs",
+    "draw_keys": "draw_keys",
+}
+# loss inputs kept as int64 (a Gumbel key is a full 64-bit integer; float would lose its bits)
+INTEGER_LOSS_INPUTS = ("draw_keys",)
 
 # reject missing loss inputs before they enter a shared batch
 LOSS_FN_INPUTS = {
@@ -38,6 +45,7 @@ LOSS_FN_INPUTS = {
     "ppo": ("logprobs", "advantages"),
     "cispo": ("logprobs", "advantages"),
     "dro": ("logprobs", "advantages"),
+    "gumbel_match": ("logprobs", "advantages", "draw_keys"),
 }
 
 

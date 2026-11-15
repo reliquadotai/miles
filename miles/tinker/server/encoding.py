@@ -9,7 +9,7 @@ import pydantic
 
 import tinker
 from miles.tinker.core.input_validation import validate_save_options, validate_ttl_seconds
-from miles.tinker.core.types import LOSS_INPUT_KEYS, UserInputError
+from miles.tinker.core.types import INTEGER_LOSS_INPUTS, LOSS_INPUT_KEYS, UserInputError
 from tinker import types as tinker_types
 from tinker.types.topk_logprobs import MASK_LOGPROB
 
@@ -196,7 +196,8 @@ def build_datum(input_tokens: list[int], inputs: dict[str, list], index: int) ->
     datum = {"tokens": input_tokens + targets[-1:], "target_len": len(targets), "target_tokens": targets}
     for wire_key, datum_key in LOSS_INPUT_KEYS.items():
         if wire_key in inputs:
-            datum[datum_key] = [float(value) for value in inputs[wire_key]]
+            cast = int if wire_key in INTEGER_LOSS_INPUTS else float
+            datum[datum_key] = [cast(value) for value in inputs[wire_key]]
     return datum
 
 
@@ -256,7 +257,11 @@ def render_result(result: dict) -> dict:
             "type": "forward_backward",
             "loss_fn_output_type": "ArrayRecord",
             "loss_fn_outputs": [
-                {"loss:sum": _tensor_json([output["loss"]]), "logprobs": _tensor_json(output["logprobs"])}
+                {
+                    "loss:sum": _tensor_json([output["loss"]]),
+                    "logprobs": _tensor_json(output["logprobs"]),
+                    **{key: _tensor_json(output[key], dtype) for key, dtype in EXTRA_OUTPUTS.items() if key in output},
+                }
                 for output in outputs
             ],
             "metrics": {"loss:sum": float(sum(output["loss"] for output in outputs))},
@@ -297,5 +302,9 @@ def render_result(result: dict) -> dict:
     raise AssertionError(f"unrenderable result op {op!r}")
 
 
-def _tensor_json(values: list[float]) -> dict:
-    return {"dtype": "float32", "shape": [len(values)], "data": values}
+# optional per-datum loss outputs (gumbel_match) and their wire dtype
+EXTRA_OUTPUTS = {"vstar": "int64", "match": "float32"}
+
+
+def _tensor_json(values: list[float], dtype: str = "float32") -> dict:
+    return {"dtype": dtype, "shape": [len(values)], "data": values}
