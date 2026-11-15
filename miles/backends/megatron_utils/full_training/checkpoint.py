@@ -13,7 +13,10 @@ from miles.backends.training_utils.parallel import get_parallel_state
 
 
 def _state(args, model, optimizer, *, is_loading: bool) -> dict:
-    metadata = _build_sharded_state_dict_metadata(args, dp_cp_group=get_parallel_state().intra_dp_cp.group)
+    # Megatron reads its own namespace (args.backend), not miles' TrainerConfig
+    metadata = _build_sharded_state_dict_metadata(
+        getattr(args, "backend", args), dp_cp_group=get_parallel_state().intra_dp_cp.group
+    )
     chunks = unwrap_model(model)
     state = {
         "model" if len(chunks) == 1 else f"model{index}": chunk.sharded_state_dict(metadata=metadata)
