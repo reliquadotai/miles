@@ -44,7 +44,6 @@ class FullTrainingBackend(MilesBackend):
 
     async def pin_snapshot(self, name: str | None, path: str | None) -> None:
         info = await self.inference_controller.start_update_weights()
-        complete = False
         try:
             if not info.rollout_engines:
                 raise RuntimeError("no inference engines available for full-model sampling")
@@ -72,10 +71,11 @@ class FullTrainingBackend(MilesBackend):
                 if not all(str(actual) == version for actual in versions):
                     raise RuntimeError(f"inference replicas did not load snapshot {version!r}: {versions}")
                 self._loaded_snapshot = identity
-            complete = True
-        finally:
-            if complete:
-                await self.inference_controller.end_update_weights(info.snapshot_cell_id_to_hashes)
-            else:
-                self._loaded_snapshot = None
-                await self.inference_controller.abort_update_weights()
+        except BaseException:
+            self._loaded_snapshot = None
+            await self.inference_controller.abort_update_weights()
+            raise
+        # main's protocol: the lock is released by end_update_weights, which names the cells that failed
+        await self.inference_controller.end_update_weights(
+            snapshot_cell_id_to_hashes=info.snapshot_cell_id_to_hashes, failed_cell_ids=[]
+        )
