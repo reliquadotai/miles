@@ -180,11 +180,22 @@ class TinkerService:
         base_model = payload["base_model"]
         if base_model != self.config.base_model:
             raise UserInputError(f"this gateway serves {self.config.base_model!r}, not {base_model!r}")
-        lora_config = payload.get("lora_config") or {}
-        validate_model_config(lora_config, self.config)
-        rank = lora_config.get("rank", 32)
-        alpha = self.config.lora_alpha if self.config.lora_alpha is not None else float(2 * rank)
+        parameterization = payload.get("parameterization")
+        expected = "full" if self.config.full_training else "lora"
+        if parameterization is not None and parameterization != {"type": expected}:
+            raise UserInputError(f"this gateway supports {expected!r} parameterization")
+        if self.config.full_training:
+            if payload.get("lora_config") is not None:
+                raise UserInputError("lora_config must be absent for full training")
+            rank, alpha = None, None
+        else:
+            lora_config = payload.get("lora_config") or {}
+            validate_model_config(lora_config, self.config)
+            rank = lora_config.get("rank", 32)
+            alpha = self.config.lora_alpha if self.config.lora_alpha is not None else float(2 * rank)
         if not self.free_slots:
+            if self.config.full_training:
+                raise UserInputError("full training supports one active model per trainer")
             raise UserInputError(f"no free adapter slots (capacity {self.config.n_slots})")
         slot = min(self.free_slots)
         self.free_slots.remove(slot)
@@ -692,7 +703,7 @@ class TinkerService:
         meta = read_checkpoint_metadata(checkpoint_dir, tenant, tinker_path)
         return {
             "base_model": meta["base_model"],
-            "is_lora": True,
+            "is_lora": meta.get("is_lora", True),
             "lora_rank": meta["lora_rank"],
             "train_attn": meta["train_attn"],
             "train_mlp": meta["train_mlp"],

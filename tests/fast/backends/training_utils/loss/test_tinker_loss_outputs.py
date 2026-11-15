@@ -98,7 +98,8 @@ def test_a_zero_loss_mask_removes_the_datum_from_every_objective(monkeypatch, lo
     ],
     ids=["is", "ppo-default", "ppo-override", "cispo-default", "cispo-override", "dro-default", "dro-override"],
 )
-def test_nonzero_objectives_and_gradients(monkeypatch, recompute, loss_fn, config, token_losses, gradients):
+@pytest.mark.parametrize("multi_lora", [False, True], ids=["full", "lora"])
+def test_nonzero_objectives_and_gradients(monkeypatch, recompute, loss_fn, config, token_losses, gradients, multi_lora):
     make_parallel_state()
     monkeypatch.setattr(loss_module, "get_sum_of_sample_mean", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(tinker_losses, "_target_logprobs", lambda _args, _batch, logits: [logits[:3], logits[3:]])
@@ -108,7 +109,7 @@ def test_nonzero_objectives_and_gradients(monkeypatch, recompute, loss_fn, confi
         loss_type="policy_loss",
         recompute_loss_function=recompute,
         use_dynamic_global_batch_size=True,
-        multi_lora=True,
+        multi_lora=multi_lora,
         backend=Namespace(calculate_per_token_loss=False, global_batch_size=4),
     )
     # Both advantage signs cross each clipping boundary; the last two tokens are masked.

@@ -243,7 +243,8 @@ def setup_model_and_optimizer(
 
         setup_optimizer_state_streaming(args, optimizer)
 
-    opt_param_scheduler = get_optimizer_param_scheduler(args, optimizer)
+    # Tinker clients supply Adam settings per step and have no fixed rollout count.
+    opt_param_scheduler = None if getattr(args, "tinker_full_training", False) else get_optimizer_param_scheduler(args, optimizer)
     return model, optimizer, opt_param_scheduler
 
 
@@ -502,6 +503,7 @@ def run_forward_backward_pass(
                 "rollout_mask_sums",
                 "loss_weights",
                 "draw_keys",
+                "draw_mask",
                 "target_tokens",
                 "sample_indices",
                 *sampling_mask_keys,
@@ -550,11 +552,11 @@ def run_forward_backward_pass(
 
             from miles.backends.training_utils.loss.hub.gumbel_match import fp32_output_layer
 
-            with fp32_output_layer(model, enabled=batch.get("loss_fn") == "gumbel_match"):
+            with fp32_output_layer(model, enabled=batch.get("loss_fn") in ("gumbel_match", "reliquary_gate")):
                 output_tensor = model(
                     **forward_kwargs,
                     # v* is decided on fp32 logits: their bf16 rounding flips Gumbel picks
-                    fp32_output=batch.get("loss_fn") == "gumbel_match"
+                    fp32_output=batch.get("loss_fn") in ("gumbel_match", "reliquary_gate")
                     or args.loss_type not in ("policy_loss", "sft_loss", "score_centering"),
                 )
 

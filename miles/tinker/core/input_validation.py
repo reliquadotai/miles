@@ -45,6 +45,7 @@ def validate_batch_payload(op: CommandOp, payload: dict, config: GatewayConfig) 
             "cispo": ("clip_low_threshold", "clip_high_threshold"),
             "dro": ("beta",),
             "gumbel_match": ("temperature",),
+            "reliquary_gate": ("temperature", "min_match"),
         }.get(payload["loss_fn"], ())
         for key in config_keys:
             if key in loss_fn_config:
@@ -52,7 +53,7 @@ def validate_batch_payload(op: CommandOp, payload: dict, config: GatewayConfig) 
                 if type(value) not in (int, float) or not math.isfinite(value):
                     raise UserInputError(f"loss_fn_config[{key!r}] must be a finite number")
         temperature = loss_fn_config.get("temperature")
-        if payload["loss_fn"] == "gumbel_match" and temperature is not None and not temperature > 0:
+        if payload["loss_fn"] in ("gumbel_match", "reliquary_gate") and temperature is not None and not temperature > 0:
             raise UserInputError("loss_fn_config['temperature'] must be positive")
     total_tokens = 0
     for index, datum in enumerate(datums):
@@ -158,7 +159,12 @@ def validate_checkpoint_metadata(meta, shown_path: str) -> None:
         "train_mlp": (bool,),
         "train_unembed": (bool,),
     }
+    if isinstance(meta, dict) and meta.get("is_lora") is False:
+        fields["lora_rank"] = (type(None),)
+        fields["lora_alpha"] = (type(None),)
     if not isinstance(meta, dict) or any(type(meta.get(key)) not in types for key, types in fields.items()):
         raise UserInputError(f"checkpoint {shown_path!r} has invalid or unsupported metadata")
-    if meta["lora_rank"] <= 0 or not math.isfinite(meta["lora_alpha"]):
+    if type(meta.get("is_lora", True)) is not bool:
+        raise UserInputError(f"checkpoint {shown_path!r} has invalid parameterization")
+    if meta.get("is_lora", True) and (meta["lora_rank"] <= 0 or not math.isfinite(meta["lora_alpha"])):
         raise UserInputError(f"checkpoint {shown_path!r} has invalid LoRA metadata")

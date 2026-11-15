@@ -109,6 +109,10 @@ class LoraConfig(BaseConfig):
             )
         ),
     ] = False
+    tinker_full_training: A[
+        bool,
+        Arg(help="Tinker gateway: train all model parameters, one active model per trainer (no LoRA slots)"),
+    ] = False
     multi_lora_n_adapters: A[
         int,
         Arg(

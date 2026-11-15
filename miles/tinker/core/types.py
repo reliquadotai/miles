@@ -34,6 +34,7 @@ LOSS_INPUT_KEYS = {
     "advantages": "advantages",
     "logprobs": "sampling_logprobs",
     "draw_keys": "draw_keys",
+    "draw_mask": "draw_mask",
 }
 # loss inputs kept as int64 (a Gumbel key is a full 64-bit integer; float would lose its bits)
 INTEGER_LOSS_INPUTS = ("draw_keys",)
@@ -46,6 +47,7 @@ LOSS_FN_INPUTS = {
     "cispo": ("logprobs", "advantages"),
     "dro": ("logprobs", "advantages"),
     "gumbel_match": ("logprobs", "advantages", "draw_keys"),
+    "reliquary_gate": ("logprobs", "advantages", "draw_keys", "draw_mask"),
 }
 
 
@@ -89,6 +91,12 @@ class GatewayConfig:
     lease_timeout_s: float = 300.0  # sessions stale beyond this lose their sampling, models, and slots
     batch_token_budget: int = 262_144  # packing bound per BatchUnit
 
+    full_training: bool = False
+
+    def __post_init__(self) -> None:
+        if self.full_training and self.n_slots != 1:
+            raise ValueError("full training supports one active model per trainer")
+
 
 @dataclass
 class Command:
@@ -108,8 +116,8 @@ class ModelRecord:
     tenant: str
     slot: int
     base_model: str
-    lora_rank: int
-    lora_alpha: float
+    lora_rank: int | None
+    lora_alpha: float | None
     create_request_id: str
     request_id_by_seq: dict[int, str] = field(default_factory=dict)
     slot_initialized: bool = False

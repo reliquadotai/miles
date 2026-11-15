@@ -252,3 +252,12 @@ def gumbel_match_loss_function(args, batch, logits, sum_of_sample_mean):
 
 
 TINKER_LOSS_FUNCTIONS["gumbel_match"] = gumbel_match_loss_function
+
+
+def reliquary_gate_loss_function(args, batch, logits, sum_of_sample_mean):
+    from miles.backends.training_utils.loss.hub.reliquary_gate import reliquary_gate_loss_function as loss
+
+    return loss(args, batch, logits, sum_of_sample_mean)
+
+
+TINKER_LOSS_FUNCTIONS["reliquary_gate"] = reliquary_gate_loss_function

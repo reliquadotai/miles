@@ -13,6 +13,7 @@ from miles.ray.train.init_request import TrainerControllerInitRequest
 from miles.tinker.arguments import configure_tinker_args, validate_tinker_args
 from miles.tinker.core.service import TinkerService
 from miles.tinker.core.types import GatewayConfig
+from miles.tinker.full_training import FullTrainingBackend
 from miles.tinker.runtime import MilesBackend, take_checkpoint_root
 from miles.tinker.server.app import build_app
 from miles.tinker.server.encoding import assert_installed_sdk_version
@@ -29,13 +30,13 @@ logger = logging.getLogger(__name__)
 
 async def serve(args, *, disposer: Disposer):
     assert_installed_sdk_version()
-    assert args.multi_lora, "serve_tinker requires --multi-lora-n-adapters > 0"
+    assert args.tinker_full_training or args.multi_lora, "select --tinker-full-training or --multi-lora-n-adapters"
     validate_tinker_args(args)
     trainer_configs = compute_trainer_configs(args)
     [actor_config] = [config for config in trainer_configs if config.role == ACTOR_ROLE]
     ckpt_load_config = compute_trainer_ckpt_load_config(args, actor_config)
     assert ckpt_load_config is not None
-    assert ckpt_load_config.load == args.hf_checkpoint, "Tinker trainers and engines must load the same frozen HF base"
+    assert ckpt_load_config.load == args.hf_checkpoint, "Tinker trainers and engines must start from the same HF checkpoint"
     full_hf_config = load_hf_config(args.hf_checkpoint)
     hf_config = full_hf_config.get_text_config()
     max_tokens_per_datum = hf_config.max_position_embeddings
@@ -80,7 +81,8 @@ async def serve(args, *, disposer: Disposer):
     lora_layout = get_hf_lora_targets(full_hf_config.to_dict())
     config = GatewayConfig(
         base_model=args.tinker_base_model or args.hf_checkpoint,
-        n_slots=args.multi_lora_n_adapters,
+        n_slots=1 if args.tinker_full_training else args.multi_lora_n_adapters,
+        full_training=args.tinker_full_training,
         checkpoint_root=args.tinker_checkpoint_root,
         public_url=args.tinker_public_url,
         vocab_size=hf_config.vocab_size,
@@ -92,9 +94,9 @@ async def serve(args, *, disposer: Disposer):
         experts_shared_outer_loras=args.experts_shared_outer_loras,
         base_model_fingerprint=base_model_fingerprint(hf_config.to_dict()),
         max_lora_rank=args.lora_rank,
-        trains_attn="attn" in args.tinker_lora_groups,
-        trains_mlp="mlp" in args.tinker_lora_groups,
-        trains_unembed="unembed" in args.tinker_lora_groups,
+        trains_attn=args.tinker_full_training or "attn" in args.tinker_lora_groups,
+        trains_mlp=args.tinker_full_training or "mlp" in args.tinker_lora_groups,
+        trains_unembed=args.tinker_full_training or "unembed" in args.tinker_lora_groups,
     )
     router_url = f"http://{args.sglang_router_ip}:{args.sglang_router_port}"
     actor_world_size = args.actor_num_nodes * args.actor_num_gpus_per_node
@@ -103,7 +105,18 @@ async def serve(args, *, disposer: Disposer):
         * args.raw_megatron.base_args["pipeline_model_parallel_size"]
         * args.raw_megatron.base_args["context_parallel_size"]
     )
-    service = TinkerService(MilesBackend(trainer, router_url, lora_layout, dp_size=dp_size), config)
+    if args.tinker_full_training:
+        backend = FullTrainingBackend(
+            trainer,
+            router_url,
+            dp_size=dp_size,
+            inference_controller=inference_controller,
+            base_checkpoint=args.hf_checkpoint,
+        )
+        await backend.pin_snapshot(None, None)
+    else:
+        backend = MilesBackend(trainer, router_url, lora_layout, dp_size=dp_size)
+    service = TinkerService(backend, config)
 
     server = uvicorn.Server(
         uvicorn.Config(

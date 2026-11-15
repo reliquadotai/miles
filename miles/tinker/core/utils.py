@@ -34,6 +34,7 @@ def build_parametrization_fields(record: ModelRecord, config: GatewayConfig) -> 
     """The parametrization fields the tenant record and the gateway own; targets come from the model."""
     return {
         "base_model": record.base_model,
+        **({"is_lora": False} if config.full_training else {}),
         "lora_rank": record.lora_rank,
         "lora_alpha": record.lora_alpha,
         "lora_type": config.lora_type,

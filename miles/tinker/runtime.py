@@ -24,6 +24,7 @@ from miles.backends.training_utils.checkpoint.adapter.parametrization import (
     read_parametrization,
 )
 from miles.ray.rollout.train_data_conversion import ROLLOUT_DATA_VALUE_SPEC
+from miles.tinker.core.gate_ledger import record_gate_verdicts
 from miles.tinker.core.types import OwnershipError, UserInputError
 from miles.tinker.core.utils import PRE_COMMIT_META_FILENAME
 from miles.utils import object_store
@@ -38,6 +39,7 @@ DATUM_TO_BATCH_KEYS = {
     "advantages": "advantages",
     "sampling_logprobs": "rollout_log_probs",
     "draw_keys": "draw_keys",
+    "draw_mask": "draw_mask",
 }
 
 
@@ -172,11 +174,15 @@ def classify_lora_groups(target_modules, layout: HfLoraTargets) -> dict[str, boo
 
 
 class MilesBackend:
-    def __init__(self, trainer, router_url: str, lora_layout: HfLoraTargets, dp_size: int = 1) -> None:
+    def __init__(
+        self, trainer, router_url: str, lora_layout: HfLoraTargets | None = None, dp_size: int = 1, *,
+        full_training: bool = False,
+    ) -> None:
         self.trainer = trainer
         self.router_url = router_url
         self.lora_layout = lora_layout
         self.dp_size = dp_size
+        self.full_training = full_training
 
     def lora_groups(self, target_modules) -> dict[str, bool]:
         return classify_lora_groups(target_modules, self.lora_layout)
@@ -204,6 +210,10 @@ class MilesBackend:
         self, method: str, batch_id: int, slot_datums: list, loss_fn: str, loss_fn_config: dict
     ) -> list[dict] | dict:
         train_data = _build_train_data(_pad_to_dp_multiple(slot_datums, self.dp_size))
+        if self.full_training:
+            if any(slot != 0 for slot, _ in slot_datums):
+                raise UserInputError("full training has one model in slot zero")
+            del train_data["adapter_slots"]
         train_data["loss_fn"] = loss_fn
         train_data["loss_fn_config"] = loss_fn_config
         worker_results = await self._call_trainer(method, batch_id, train_data)
@@ -217,9 +227,12 @@ class MilesBackend:
                     by_index[index] = {
                         "loss": float(datum_output["loss"]),
                         "logprobs": datum_output["logprobs"].tolist(),
-                        **{key: datum_output[key].tolist() for key in ("vstar", "match") if key in datum_output},
+                        **{key: datum_output[key].tolist() for key in ("vstar", "match", "gap", "gate") if key in datum_output},
                     }
-        return [by_index[index] for index in range(len(slot_datums))]
+        outputs = [by_index[index] for index in range(len(slot_datums))]
+        if loss_fn == "reliquary_gate":
+            record_gate_verdicts(batch_id, slot_datums, outputs)
+        return outputs
 
     async def _call_trainer(self, method: str, batch_id: int, train_data: dict) -> list:
         store = object_store.get_instance()
@@ -295,8 +308,12 @@ class MilesBackend:
                 *[
                     post(f"{self.router_url}/generate", _with_sample_seed(request, index))
                     for index in range(payload["num_samples"])
-                ]
+                ],
+                return_exceptions=True,
             )
+            for response in responses:
+                if isinstance(response, BaseException):
+                    raise response
         except httpx.HTTPStatusError as error:
             if 400 <= error.response.status_code < 500 and error.response.status_code not in (408, 429):
                 raise UserInputError(error.response.text) from error

@@ -539,6 +539,7 @@ def _package_shards(args, data: dict[str, Any], partitions) -> list[dict[str, An
             "loss_weights",
             "advantages",
             "draw_keys",
+            "draw_mask",
             "target_tokens",
         ]:
             if key not in data:

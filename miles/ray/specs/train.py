@@ -167,7 +167,13 @@ class TrainerSpec(BaseServeSpec):
                 if config.train_backend == "megatron"
                 and config.trainer_role == ACTOR_ROLE
                 and is_multi_lora_enabled(config)
-                else _TRAINER_ACTOR_CLASSES[config.train_backend]
+                else (
+                    "miles.backends.megatron_utils.full_training.actor.FullTrainingRayActor"
+                    if config.train_backend == "megatron"
+                    and config.trainer_role == ACTOR_ROLE
+                    and config.tinker_full_training
+                    else _TRAINER_ACTOR_CLASSES[config.train_backend]
+                )
             ),
             concurrency_groups=TRAINER_CONCURRENCY_GROUPS if config.use_fault_tolerance else None,
         )

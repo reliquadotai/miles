@@ -86,7 +86,11 @@ def validate_age_recipients(recipients: list[str]) -> None:
 
 
 def validate_create_model(payload: dict) -> None:
-    request = validate_against_sdk(tinker_types.CreateModelRequest, payload)
+    # The SDK has no full-training creation helper: ``parameterization`` is this gateway's extension, checked
+    # against the trainer mode by the service; the remaining fields are the SDK's.
+    request = validate_against_sdk(
+        tinker_types.CreateModelRequest, {k: v for k, v in payload.items() if k != "parameterization"}
+    )
     validate_plain_adam("optimizer_config", request.optimizer_config, tinker_types.AdamOptimizerConfig)
 
 
@@ -304,7 +308,7 @@ def render_result(result: dict) -> dict:
 
 
 # optional per-datum loss outputs (gumbel_match) and their wire dtype
-EXTRA_OUTPUTS = {"vstar": "int64", "match": "float32"}
+EXTRA_OUTPUTS = {"vstar": "int64", "match": "float32", "gap": "float32", "gate": "float32"}
 
 
 def _tensor_json(values: list[float], dtype: str = "float32") -> dict:

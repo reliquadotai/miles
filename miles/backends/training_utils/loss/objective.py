@@ -15,7 +15,6 @@ from miles.backends.training_utils.parallel import get_parallel_state
 from miles.utils.args.custom_view import compute_custom_function_config
 from miles.utils.audit_utils.event_logger.logger import get_event_logger, is_event_logger_initialized
 from miles.utils.audit_utils.event_logger.models import TrainAdvantageComputationEvent
-from miles.utils.lora.utils import is_multi_lora_enabled
 from miles.utils.types import RolloutBatch
 
 
@@ -243,7 +242,7 @@ def loss_function(
         assert args.use_dynamic_global_batch_size == ("dynamic_global_batch_size" in batch)
         global_batch_size = batch.get("dynamic_global_batch_size", args.backend.global_batch_size)
     # Tinker losses already carry the client's normalization
-    loss_normalizer = 1 if is_multi_lora_enabled(args) else global_batch_size
+    loss_normalizer = 1 if batch.get("loss_fn") is not None else global_batch_size
     if not args.backend.calculate_per_token_loss:
         if apply_megatron_loss_scaling:
             loss_parallel_size = (
