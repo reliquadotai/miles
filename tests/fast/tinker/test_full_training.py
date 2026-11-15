@@ -131,7 +131,7 @@ async def test_optim_step_backs_out_rejected_groups_before_stepping():
     async def execute(method, batch_id, data):
         calls.append((method, data["loss_fn_config"], data["advantages"]))
         return [{"per_datum": [{"sample_index": i, "loss": 0.0, "logprobs": torch.zeros(3),
-                                "vstar": torch.tensor([1, 2, 9]), "gate": torch.tensor(gates[adv[0]])}
+                                "vstar": torch.tensor([1, 2, 9]), "gate": torch.tensor(gates.get(adv[0], gates[1.0]))}
                                for i, adv in enumerate(data["advantages"])]}]
 
     class Trainer:
@@ -286,7 +286,7 @@ class Controller:
     async def start_update_weights(self):
         return SimpleNamespace(rollout_engines=self.engines, snapshot_cell_id_to_hashes=dict(self.hashes))
 
-    async def end_update_weights(self, hashes):
+    async def end_update_weights(self, snapshot_cell_id_to_hashes, failed_cell_ids):
         pass
 
     async def abort_update_weights(self):
