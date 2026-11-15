@@ -37,6 +37,9 @@ def configure_tinker_args(args):
         ):
             assert not flag(name), f"--{name.replace('_', '-')} is not supported with Tinker full training"
         args.tinker_lora_groups = []
+        # as for LoRA: commands ship one work unit at a time, split over DP by the trainer
+        args.use_dynamic_global_batch_size = True
+        args.delay_split_train_data_by_dp = True
         return
     groups = parse_lora_targets(args.target_modules)
     if groups is None:
