@@ -35,9 +35,11 @@ LOSS_INPUT_KEYS = {
     "logprobs": "sampling_logprobs",
     "draw_keys": "draw_keys",
     "draw_mask": "draw_mask",
+    # reliquary_gate: the rollout's group, one value repeated over the datum (the gateway judges groups itself)
+    "group_ids": "group_ids",
 }
 # loss inputs kept as int64 (a Gumbel key is a full 64-bit integer; float would lose its bits)
-INTEGER_LOSS_INPUTS = ("draw_keys",)
+INTEGER_LOSS_INPUTS = ("draw_keys", "group_ids")
 
 # reject missing loss inputs before they enter a shared batch
 LOSS_FN_INPUTS = {
@@ -47,7 +49,7 @@ LOSS_FN_INPUTS = {
     "cispo": ("logprobs", "advantages"),
     "dro": ("logprobs", "advantages"),
     "gumbel_match": ("logprobs", "advantages", "draw_keys"),
-    "reliquary_gate": ("logprobs", "advantages", "draw_keys", "draw_mask"),
+    "reliquary_gate": ("logprobs", "advantages", "draw_keys", "draw_mask", "group_ids"),
 }
 
 

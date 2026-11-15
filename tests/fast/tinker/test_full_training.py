@@ -115,6 +115,43 @@ async def test_full_runtime_preserves_targets_and_omits_adapter_routing():
     assert len(await backend.forward_backward(0, [(0, datum())], "cross_entropy", {})) == 1
 
 
+def _gate_datum(group: int, advantage: float) -> dict:
+    return {"tokens": [0, 1, 2, 3], "target_tokens": [1, 2, 3], "target_len": 3, "sampling_logprobs": [0.0] * 3,
+            "advantages": [advantage] * 3, "draw_keys": [1, 2, 3], "draw_mask": [0.0, 1.0, 1.0],
+            "group_ids": [group] * 3}
+
+
+async def test_optim_step_backs_out_rejected_groups_before_stepping():
+    """reliquary_gate (lab): the gateway judges groups at optim_step and replays the batch holding a rejected
+    group's admitted rollout at negated advantage, before the trainer steps."""
+    calls = []
+    # group 7: one rollout admitted, one far under the forgery floor -> rejected
+    gates = {1.0: [1.0, 10, 10, 10, 10, 0.0, 0.0, 0], -1.0: [0.0, 10, 1, 10, 1, 9.0, 0.0, 0]}
+
+    async def execute(method, batch_id, data):
+        calls.append((method, data["loss_fn_config"], data["advantages"]))
+        return [{"per_datum": [{"sample_index": i, "loss": 0.0, "logprobs": torch.zeros(3),
+                                "vstar": torch.tensor([1, 2, 9]), "gate": torch.tensor(gates[adv[0]])}
+                               for i, adv in enumerate(data["advantages"])]}]
+
+    class Trainer:
+        async def optim_step(self, adam_params_by_slot):
+            calls.append(("optim_step", None, None))
+            return [{0: {"grad_norm": 1.0}}]
+
+    backend = MilesBackend(Trainer(), "unused", full_training=True)
+    backend._call_trainer = execute
+    await backend.forward_backward(1, [(0, _gate_datum(7, 1.0)), (0, _gate_datum(7, -1.0))], "reliquary_gate", {})
+    outcome = await backend.optim_step({0: ADAM})
+    assert [c[0] for c in calls] == ["forward_backward", "forward_backward", "optim_step"]
+    method, config, advantages = calls[1]
+    assert config == {"replay": 1} and advantages == [[-1.0] * 3, [0.0] * 3]
+    assert outcome[0]["gate_groups_rejected"] == 1 and outcome[0]["gate_rollouts_backed_out"] == 1
+    calls.clear()
+    assert (await backend.optim_step({0: ADAM}))[0] == {"grad_norm": 1.0}  # the window was cleared
+    assert [c[0] for c in calls] == ["optim_step"]
+
+
 class NativeOptimizerShape:
     """The native optimizer interface over a real CPU Adam. ``backward`` adds into a persistent buffer, like
     Megatron's DDP ``main_grad``; ``finalize`` stands for the one reduction per step; ``prepare_grads`` exposes

@@ -26,6 +26,7 @@ from miles.backends.training_utils.checkpoint.adapter.parametrization import (
 )
 from miles.ray.rollout.train_data_conversion import ROLLOUT_DATA_VALUE_SPEC
 from miles.tinker.core.gate_ledger import record_gate_verdicts
+from miles.tinker.core.gate_window import GateWindow
 from miles.tinker.core.types import OwnershipError, UserInputError
 from miles.tinker.core.utils import PRE_COMMIT_META_FILENAME
 from miles.utils import object_store
@@ -204,6 +205,8 @@ class MilesBackend:
         self.lora_layout = lora_layout
         self.dp_size = dp_size
         self.full_training = full_training
+        # reliquary_gate verdicts since each slot's last optim_step: groups are judged and backed out there
+        self.gate_window = GateWindow()
 
     def lora_groups(self, target_modules) -> dict[str, bool]:
         return classify_lora_groups(target_modules, self.lora_layout)
@@ -212,9 +215,11 @@ class MilesBackend:
         return await self.trainer.has_errored_cell()
 
     async def load_slot(self, slot: int, rank: int, alpha: float, source: dict | None = None) -> dict | None:
+        self.gate_window.clear(slot)
         return _slot_failure(await self.trainer.load_slot(slot, rank, alpha, source=source))
 
     async def unload_slot(self, slot: int) -> dict | None:
+        self.gate_window.clear(slot)
         return _slot_failure(await self.trainer.unload_slot(slot))
 
     async def forward_backward(
@@ -253,6 +258,9 @@ class MilesBackend:
         outputs = [by_index[index] for index in range(len(slot_datums))]
         if loss_fn == "reliquary_gate":
             record_gate_verdicts(batch_id, slot_datums, outputs, loss_fn_config)
+            if method == "forward_backward":
+                for slot in {slot for slot, _ in slot_datums}:
+                    self.gate_window.record(slot, batch_id, slot_datums, outputs, loss_fn_config)
         return outputs
 
     async def _call_trainer(self, method: str, batch_id: int, train_data: dict) -> list:
@@ -266,8 +274,27 @@ class MilesBackend:
             store.remove(data_ref)
 
     async def optim_step(self, adam_params_by_slot: dict[int, dict]) -> dict[int, dict]:
-        worker_results = await self.trainer.optim_step(adam_params_by_slot=adam_params_by_slot)
-        return worker_results[0]
+        """Back out every rejected reliquary_gate group first (``GateWindow``); a slot whose back-out fails is not
+        stepped (its error closes the model: gradients of a rejected group must never be applied)."""
+        failed, gate_metrics = {}, {}
+        for slot in adam_params_by_slot:
+            plan = self.gate_window.plan(slot)
+            self.gate_window.clear(slot)
+            for batch_id, datums, config in plan.replays:
+                result = await self._execute_batch("forward_backward", batch_id, datums, "reliquary_gate", config)
+                if isinstance(result, dict) and "error" in result:
+                    failed[slot] = {"error": f"group back-out failed: {result['error']}"}
+                    break
+            if plan.groups:
+                gate_metrics[slot] = {"gate_groups": plan.groups, "gate_groups_rejected": plan.rejected,
+                                      "gate_rollouts_backed_out": plan.backed_out}
+        stepped = {slot: adam for slot, adam in adam_params_by_slot.items() if slot not in failed}
+        results = dict(failed)
+        if stepped:
+            worker_results = await self.trainer.optim_step(adam_params_by_slot=stepped)
+            for slot, outcome in worker_results[0].items():
+                results[slot] = outcome if "error" in outcome else outcome | gate_metrics.get(slot, {})
+        return results
 
     async def save_slot(
         self, slot: int, root: str, name: str, tenant_digest: str, parametrization_fields: dict

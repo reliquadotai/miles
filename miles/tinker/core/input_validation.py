@@ -45,13 +45,16 @@ def validate_batch_payload(op: CommandOp, payload: dict, config: GatewayConfig) 
             "cispo": ("clip_low_threshold", "clip_high_threshold"),
             "dro": ("beta",),
             "gumbel_match": ("temperature",),
-            "reliquary_gate": ("temperature", "min_match", "replay"),
+            "reliquary_gate": ("temperature", "min_match"),
         }.get(payload["loss_fn"], ())
         for key in config_keys:
             if key in loss_fn_config:
                 value = loss_fn_config[key]
                 if type(value) not in (int, float) or not math.isfinite(value):
                     raise UserInputError(f"loss_fn_config[{key!r}] must be a finite number")
+        if payload["loss_fn"] == "reliquary_gate" and "replay" in loss_fn_config:
+            # back-out replays skip verification: only the gateway issues them, at optim_step
+            raise UserInputError("loss_fn_config['replay'] is reserved to the gateway's group back-out")
         temperature = loss_fn_config.get("temperature")
         if payload["loss_fn"] in ("gumbel_match", "reliquary_gate") and temperature is not None and not temperature > 0:
             raise UserInputError("loss_fn_config['temperature'] must be positive")
@@ -77,6 +80,8 @@ def validate_batch_payload(op: CommandOp, payload: dict, config: GatewayConfig) 
                     f"datum {index}: loss_fn_inputs[{wire_key!r}] has {len(values)} values "
                     f"for {datum['target_len']} target tokens"
                 )
+        if payload["loss_fn"] == "reliquary_gate" and len(set(datum["group_ids"])) != 1:
+            raise UserInputError(f"datum {index}: loss_fn_inputs['group_ids'] must repeat one group id")
         unread = [
             wire_key
             for wire_key, datum_key in LOSS_INPUT_KEYS.items()
