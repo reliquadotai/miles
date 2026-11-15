@@ -105,3 +105,14 @@ def resolve_sampler_checkpoint(
 
 def tenant_digest(tenant: str) -> str:
     return hashlib.sha256(tenant.encode()).hexdigest()
+
+
+def list_checkpoint_files(path, private=frozenset()) -> list[str]:
+    """Every file under a committed checkpoint dir, as sorted relative paths (a full checkpoint keeps its weights in
+    ``hf/`` and its state in ``dist/``), except the gateway-private top-level ``private`` names."""
+    root = Path(path)
+    return sorted(
+        p.relative_to(root).as_posix()
+        for p in root.rglob("*")
+        if p.is_file() and not (p.parent == root and p.name in private)
+    )

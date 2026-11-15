@@ -28,7 +28,7 @@ from miles.ray.rollout.train_data_conversion import ROLLOUT_DATA_VALUE_SPEC
 from miles.tinker.core.gate_ledger import record_gate_verdicts
 from miles.tinker.core.gate_window import GateWindow
 from miles.tinker.core.types import OwnershipError, UserInputError
-from miles.tinker.core.utils import PRE_COMMIT_META_FILENAME
+from miles.tinker.core.utils import PRE_COMMIT_META_FILENAME, list_checkpoint_files
 from miles.utils import object_store
 from miles.utils.http_utils import post
 from miles.utils.lora.hf_lora_targets import GDN_IN_PROJ_COMPONENTS_BY_MODULE, HfLoraTargets
@@ -153,7 +153,7 @@ def resolve_checkpoint_files(root: str, name: str, tenant: str | None) -> dict |
         raise OwnershipError(f"checkpoint {name!r} does not belong to this tenant") from error
     if committed is None:
         return None
-    files = sorted(p.name for p in committed.path.iterdir() if p.is_file() and p.name != TENANT_FILENAME)
+    files = list_checkpoint_files(committed.path, private={TENANT_FILENAME})
     return {"path": str(committed.path), "commit_id": committed.commit_id, "files": files}
 
 

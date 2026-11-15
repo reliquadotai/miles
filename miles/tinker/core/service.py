@@ -526,6 +526,11 @@ class TinkerService:
 
     async def _save_weights_external(self, record: ModelRecord, payload: dict) -> dict:
         """The official Tinker export of the adapter, for download (get_external_weights_urls)."""
+        if self.config.full_training:
+            raise UserInputError(
+                "full models export HF weights with save_weights_for_sampler; "
+                "get_external_weights_urls on that sampler path downloads them"
+            )
         if not self.config.exports_tinker_names:
             raise UserInputError(
                 "this model family has no checked official Tinker names; save_weights_external is unsupported"
@@ -583,7 +588,9 @@ class TinkerService:
 
     async def external_weights_urls(self, tenant: str, model_id: str, checkpoint_id: str, base_url: str) -> dict:
         """Download URLs that carry no credential, bound to this tenant, the checkpoint and an expiry."""
-        if not checkpoint_id.startswith("external_weights/"):
+        # a full model's sampler export is its HF weights: the miners' download (lab)
+        shareable = ("external_weights/", "sampler_weights/") if self.config.full_training else ("external_weights/",)
+        if not checkpoint_id.startswith(shareable):
             raise UserInputError(f"tinker://{model_id}/{checkpoint_id} is not an external_weights checkpoint")
         tinker_path, _, _, files = await asyncio.to_thread(self._owned_checkpoint, tenant, model_id, checkpoint_id)
         now = time.time()

@@ -184,7 +184,7 @@ def build_app(service: TinkerService) -> FastAPI:
         await service.delete_checkpoint(_tenant(request), model_id, checkpoint_id)
         return None
 
-    @app.get("/api/v1/external_weights/{token}/{filename}")
+    @app.get("/api/v1/external_weights/{token}/{filename:path}")
     async def download_external_weights(token: str, filename: str):
         """The URL is the credential (the SDK downloads without one). The file is opened before the headers go
         out, so a concurrent delete yields the complete file or a 404, never a truncated one."""
