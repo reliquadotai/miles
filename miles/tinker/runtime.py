@@ -197,7 +197,7 @@ def classify_lora_groups(target_modules, layout: HfLoraTargets) -> dict[str, boo
 
 class MilesBackend:
     def __init__(
-        self, trainer, router_url: str, lora_layout: HfLoraTargets | None = None, dp_size: int = 1, *,
+        self, trainer, router_url: str | None, lora_layout: HfLoraTargets | None = None, dp_size: int = 1, *,
         full_training: bool = False,
     ) -> None:
         self.trainer = trainer
@@ -350,6 +350,9 @@ class MilesBackend:
     # -------- sampling --------
 
     async def sample(self, payload: dict, lora_name: str | None, lora_path: str | None = None) -> dict:
+        if self.router_url is None:
+            return {"error": "this gateway runs without inference engines: sample from the exported weights "
+                             "(save_weights_for_sampler) with your own engine"}
         request = self._generate_request(payload, lora_name, lora_path)
         try:
             responses = await asyncio.gather(

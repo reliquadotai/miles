@@ -65,7 +65,9 @@ async def serve(args, *, disposer: Disposer):
         ckpt_load_config=ckpt_load_config,
     )
 
-    await resolve_router_addrs(args, router_providers=compute_router_providers(args, capability=capability))
+    # --debug-train-only: no SGLang (the miners sample from exported weights); the controller's init is a no-op
+    if args.starts_inference_engines:
+        await resolve_router_addrs(args, router_providers=compute_router_providers(args, capability=capability))
     inference_controller = create_inference_controller_handle(capability=capability)
     await inference_controller.init()
     disposer.add(inference_controller)
@@ -98,7 +100,9 @@ async def serve(args, *, disposer: Disposer):
         trains_mlp=args.tinker_full_training or "mlp" in args.tinker_lora_groups,
         trains_unembed=args.tinker_full_training or "unembed" in args.tinker_lora_groups,
     )
-    router_url = f"http://{args.sglang_router_ip}:{args.sglang_router_port}"
+    router_url = (
+        f"http://{args.sglang_router_ip}:{args.sglang_router_port}" if args.starts_inference_engines else None
+    )
     actor_world_size = args.actor_num_nodes * args.actor_num_gpus_per_node
     dp_size = actor_world_size // (
         args.raw_megatron.base_args["tensor_model_parallel_size"]
@@ -110,7 +114,7 @@ async def serve(args, *, disposer: Disposer):
             trainer,
             router_url,
             dp_size=dp_size,
-            inference_controller=inference_controller,
+            inference_controller=inference_controller if args.starts_inference_engines else None,
             base_checkpoint=args.hf_checkpoint,
         )
         await backend.pin_snapshot(None, None)

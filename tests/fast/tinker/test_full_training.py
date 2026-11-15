@@ -152,6 +152,16 @@ async def test_optim_step_backs_out_rejected_groups_before_stepping():
     assert [c[0] for c in calls] == ["optim_step"]
 
 
+async def test_gateway_without_inference_engines_refuses_sampling_only():
+    """lab: a training-only gateway (no SGLang) answers sample with an error instead of reaching for a router."""
+    backend = FullTrainingBackend(None, None, inference_controller=None, base_checkpoint="/base")
+    await backend.pin_snapshot(None, None)  # nothing to pin
+    outcome = await backend.sample({"num_samples": 1}, None)
+    assert "without inference engines" in outcome["error"]
+    lora = MilesBackend(None, None)
+    assert "without inference engines" in (await lora.sample({"num_samples": 1}, None))["error"]
+
+
 class NativeOptimizerShape:
     """The native optimizer interface over a real CPU Adam. ``backward`` adds into a persistent buffer, like
     Megatron's DDP ``main_grad``; ``finalize`` stands for the one reduction per step; ``prepare_grads`` exposes

@@ -9,7 +9,10 @@ HF_SUBDIR = "hf"  # miles.backends.megatron_utils.full_training.actor.HF_SUBDIR 
 
 
 class FullTrainingBackend(MilesBackend):
-    def __init__(self, trainer, router_url: str, *, inference_controller, base_checkpoint: str, dp_size: int = 1):
+    def __init__(
+        self, trainer, router_url: str | None, *, inference_controller, base_checkpoint: str, dp_size: int = 1
+    ):
+        """``inference_controller`` None: a training-only gateway (no engines); sampling is refused."""
         super().__init__(trainer, router_url, None, dp_size, full_training=True)
         self.inference_controller = inference_controller
         self.base_checkpoint = base_checkpoint
@@ -22,6 +25,8 @@ class FullTrainingBackend(MilesBackend):
     resolve_adapter = staticmethod(resolve_full_checkpoint)
 
     async def sample(self, payload: dict, lora_name: str | None, lora_path: str | None = None) -> dict:
+        if self.inference_controller is None:
+            return await super().sample(payload, lora_name, lora_path)
         async with self._sampling_lock:
             # Cancellation before admission does not enqueue generation. After
             # admission, finish the calls before another sampler replaces weights.
@@ -43,6 +48,8 @@ class FullTrainingBackend(MilesBackend):
             return {"error": str(error)}
 
     async def pin_snapshot(self, name: str | None, path: str | None) -> None:
+        if self.inference_controller is None:
+            return
         info = await self.inference_controller.start_update_weights()
         try:
             if not info.rollout_engines:
