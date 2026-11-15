@@ -151,6 +151,8 @@ def reliquary_gate_loss_function(args, batch, logits, sum_of_sample_mean):
     from miles.backends.training_utils.parallel import get_parallel_state
 
     config = batch.get("loss_fn_config") or {}
+    if config.get("replay"):
+        return _replay_loss(args, batch, logits)
     temperature = float(config.get("temperature", 1.0))
     floor = max(RL_ROLLOUT_MATCH_FLOOR, float(config.get("min_match", 0.0)))
     eos = {int(x) for x in str(config.get("eos_ids", "")).split(",") if x.strip()}
@@ -229,6 +231,25 @@ def reliquary_gate_loss_function(args, batch, logits, sum_of_sample_mean):
         output["gap"] = out["gap"].cpu()
         output["gate"] = torch.tensor([float(ok), *map(float, tally), max_gap, -1.0 if last is None else last,
                                        float(n_sub)])
+    return loss, log
+
+
+def _replay_loss(args, batch, logits):
+    """A back-out pass: the client sends the first pass's v* as targets (negated advantages); no re-verification,
+    so it cancels exactly what the first pass added. Same ratio-1 policy term."""
+    from miles.backends.training_utils.loss.hub import tinker_losses as tl
+
+    log_probs = tl._target_logprobs(args, batch, logits)
+    per_datum_losses = [
+        -(torch.exp(log_prob - log_prob.detach()) * tl._as_tensor_like(advantage, log_prob) * mask).sum()
+        for log_prob, advantage, mask in zip(
+            log_probs, tl._local_response_values(args, batch, batch["advantages"]),
+            tl._local_response_masks(args, batch, log_probs), strict=True,
+        )
+    ]
+    loss, log = tl._sum_loss_and_outputs(args, batch, logits, log_probs, per_datum_losses)
+    for output in log.get("per_datum") or []:
+        output["gate"] = torch.tensor([1.0, 0, 0, 0, 0, 0.0, -1.0, 0])
     return loss, log
 
 

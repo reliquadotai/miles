@@ -252,7 +252,7 @@ class MilesBackend:
                     }
         outputs = [by_index[index] for index in range(len(slot_datums))]
         if loss_fn == "reliquary_gate":
-            record_gate_verdicts(batch_id, slot_datums, outputs)
+            record_gate_verdicts(batch_id, slot_datums, outputs, loss_fn_config)
         return outputs
 
     async def _call_trainer(self, method: str, batch_id: int, train_data: dict) -> list:
