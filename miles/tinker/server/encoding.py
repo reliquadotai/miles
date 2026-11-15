@@ -196,8 +196,9 @@ def build_datum(input_tokens: list[int], inputs: dict[str, list], index: int) ->
     datum = {"tokens": input_tokens + targets[-1:], "target_len": len(targets), "target_tokens": targets}
     for wire_key, datum_key in LOSS_INPUT_KEYS.items():
         if wire_key in inputs:
-            cast = int if wire_key in INTEGER_LOSS_INPUTS else float
-            datum[datum_key] = [cast(value) for value in inputs[wire_key]]
+            # integer inputs are kept as sent: validation refuses a float key (its low bits are already lost)
+            values = inputs[wire_key]
+            datum[datum_key] = list(values) if wire_key in INTEGER_LOSS_INPUTS else [float(v) for v in values]
     return datum
 
 

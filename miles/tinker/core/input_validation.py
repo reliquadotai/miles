@@ -1,7 +1,7 @@
 import math
 import re
 
-from miles.tinker.core.types import LOSS_FN_INPUTS, LOSS_INPUT_KEYS, CommandOp, GatewayConfig, UserInputError
+from miles.tinker.core.types import INTEGER_LOSS_INPUTS, LOSS_FN_INPUTS, LOSS_INPUT_KEYS, CommandOp, GatewayConfig, UserInputError
 
 
 def validate_model_config(lora_config: dict, config: GatewayConfig) -> None:
@@ -51,6 +51,9 @@ def validate_batch_payload(op: CommandOp, payload: dict, config: GatewayConfig) 
                 value = loss_fn_config[key]
                 if type(value) not in (int, float) or not math.isfinite(value):
                     raise UserInputError(f"loss_fn_config[{key!r}] must be a finite number")
+        temperature = loss_fn_config.get("temperature")
+        if payload["loss_fn"] == "gumbel_match" and temperature is not None and not temperature > 0:
+            raise UserInputError("loss_fn_config['temperature'] must be positive")
     total_tokens = 0
     for index, datum in enumerate(datums):
         validate_token_ids(datum["tokens"], config.vocab_size, f"datum {index}: model_input")
@@ -64,6 +67,10 @@ def validate_batch_payload(op: CommandOp, payload: dict, config: GatewayConfig) 
                 raise UserInputError(
                     f"datum {index}: loss_fn {payload['loss_fn']!r} needs loss_fn_inputs[{wire_key!r}]"
                 )
+            if wire_key in INTEGER_LOSS_INPUTS and any(
+                type(v) is not int or not -(2**63) <= v < 2**63 for v in values
+            ):
+                raise UserInputError(f"datum {index}: loss_fn_inputs[{wire_key!r}] must be int64 integers")
             if len(values) != datum["target_len"]:
                 raise UserInputError(
                     f"datum {index}: loss_fn_inputs[{wire_key!r}] has {len(values)} values "
