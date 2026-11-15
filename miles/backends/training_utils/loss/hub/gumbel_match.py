@@ -148,6 +148,55 @@ def gumbel_match_loss_function(args, batch, logits, sum_of_sample_mean):
     return loss, log
 
 
+# output rows upcast at a time: bounds the fp32 weight temporaries (16384 x 4096 x 4 B = 256 MiB)
+_HEAD_CHUNK = int(os.environ.get("FP32_HEAD_CHUNK_ROWS", "16384"))
+
+
+class _Fp32Head(torch.autograd.Function):
+    """``fp32(x) @ fp32(w).T`` over row chunks of ``w``: no fp32 copy of the weight is kept for backward, and the
+    weight gradient is computed chunk by chunk straight into the weight's dtype."""
+
+    @staticmethod
+    def forward(ctx, x, w, chunk):
+        x32 = x.float()
+        out = x32.new_empty(*x.shape[:-1], w.shape[0])
+        previous = torch.backends.cuda.matmul.allow_tf32
+        torch.backends.cuda.matmul.allow_tf32 = False
+        try:
+            for start in range(0, w.shape[0], chunk):
+                end = min(w.shape[0], start + chunk)
+                out[..., start:end] = x32 @ w[start:end].float().t()
+        finally:
+            torch.backends.cuda.matmul.allow_tf32 = previous
+        ctx.save_for_backward(x, w)
+        ctx.chunk = chunk
+        return out
+
+    @staticmethod
+    def backward(ctx, grad):
+        x, w = ctx.saved_tensors
+        need_x, need_w = ctx.needs_input_grad[0], ctx.needs_input_grad[1]
+        g = grad.reshape(-1, w.shape[0])
+        x32 = x.reshape(-1, x.shape[-1]).float()
+        grad_x = torch.zeros_like(x32) if need_x else None
+        grad_w = torch.empty_like(w) if need_w else None
+        for start in range(0, w.shape[0], ctx.chunk):
+            end = min(w.shape[0], start + ctx.chunk)
+            g_chunk = g[:, start:end]
+            if need_x:
+                grad_x.addmm_(g_chunk, w[start:end].float())
+            if need_w:
+                grad_w[start:end] = (g_chunk.t() @ x32).to(w.dtype)
+        if need_x:
+            grad_x = grad_x.view(x.shape).to(x.dtype)
+        return grad_x, grad_w, None
+
+
+def fp32_head(x: torch.Tensor, w: torch.Tensor, *, chunk: int = _HEAD_CHUNK) -> torch.Tensor:
+    """The miners' ``head_dtype=float32`` lm_head: ``fp32(x) @ fp32(w).T`` in exact fp32 (TF32 off)."""
+    return _Fp32Head.apply(x, w, chunk)
+
+
 def _output_linears(model) -> list:
     """The vocab-parallel output projection(s) of a Megatron model (list of chunks), innermost module only."""
     from megatron.core.tensor_parallel.layers import ColumnParallelLinear
@@ -192,12 +241,7 @@ class fp32_output_layer:
                     x = gather_from_sequence_parallel_region(input_, group=group)
                 else:
                     x = copy_to_tensor_model_parallel_region(input_, group=group)
-                previous = torch.backends.cuda.matmul.allow_tf32
-                torch.backends.cuda.matmul.allow_tf32 = False
-                try:
-                    out = torch.nn.functional.linear(x.float(), w.float())
-                finally:
-                    torch.backends.cuda.matmul.allow_tf32 = previous
+                out = fp32_head(x, w)
                 gather = _linear.gather_output if runtime_gather_output is None else runtime_gather_output
                 if gather:
                     raise RuntimeError("gumbel_match fp32 head: gathered output is not supported")
