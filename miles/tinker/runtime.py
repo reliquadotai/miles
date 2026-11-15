@@ -25,7 +25,7 @@ from miles.backends.training_utils.checkpoint.adapter.parametrization import (
     read_parametrization,
 )
 from miles.ray.rollout.train_data_conversion import ROLLOUT_DATA_VALUE_SPEC
-from miles.tinker.core.gate_ledger import record_gate_verdicts
+from miles.tinker.core.gate_ledger import record_step_verdicts
 from miles.tinker.core.gate_window import GateWindow
 from miles.tinker.core.types import OwnershipError, UserInputError
 from miles.tinker.core.utils import PRE_COMMIT_META_FILENAME, list_checkpoint_files
@@ -257,7 +257,6 @@ class MilesBackend:
                     }
         outputs = [by_index[index] for index in range(len(slot_datums))]
         if loss_fn == "reliquary_gate":
-            record_gate_verdicts(batch_id, slot_datums, outputs, loss_fn_config)
             if method == "forward_backward":
                 for slot in {slot for slot, _ in slot_datums}:
                     self.gate_window.record(slot, batch_id, slot_datums, outputs, loss_fn_config)
@@ -276,9 +275,9 @@ class MilesBackend:
     async def optim_step(self, adam_params_by_slot: dict[int, dict]) -> dict[int, dict]:
         """Back out every rejected reliquary_gate group first (``GateWindow``); a slot whose back-out fails is not
         stepped (its error closes the model: gradients of a rejected group must never be applied)."""
-        failed, gate_metrics = {}, {}
+        failed, gate_metrics, plans = {}, {}, {}
         for slot in adam_params_by_slot:
-            plan = self.gate_window.plan(slot)
+            plan = plans[slot] = self.gate_window.plan(slot)
             self.gate_window.clear(slot)
             for batch_id, datums, config in plan.replays:
                 result = await self._execute_batch("forward_backward", batch_id, datums, "reliquary_gate", config)
@@ -294,6 +293,8 @@ class MilesBackend:
             worker_results = await self.trainer.optim_step(adam_params_by_slot=stepped)
             for slot, outcome in worker_results[0].items():
                 results[slot] = outcome if "error" in outcome else outcome | gate_metrics.get(slot, {})
+        for slot, plan in plans.items():
+            record_step_verdicts(slot, plan.rows, results[slot])
         return results
 
     async def save_slot(

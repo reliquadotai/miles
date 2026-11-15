@@ -30,6 +30,7 @@ class BackOutPlan:
     rejected: int = 0
     backed_out: int = 0
     replays: list = field(default_factory=list)  # (batch_id, [(slot, datum)], loss_fn_config)
+    rows: list = field(default_factory=list)  # one per recorded rollout, for the pay ledger (gate_ledger)
 
 
 class GateWindow:
@@ -66,6 +67,11 @@ class GateWindow:
         accepted = judge(groups, tallies, admitted)
         back = {n for g, ok in zip(groups, accepted, strict=True) if not ok for n in g if admitted[n]}
         plan = BackOutPlan(groups=len(groups), rejected=accepted.count(False), backed_out=len(back))
+        group_ok = {n: ok for g, ok in zip(groups, accepted, strict=True) for n in g}
+        for n, ((b, i), verdict) in enumerate(zip(rows, verdicts, strict=True)):
+            plan.rows.append({"batch_id": b.batch_id, "index": i, "group_id": int(b.datums[i]["group_ids"][0]),
+                              **verdict, "admitted": admitted[n], "group_accepted": group_ok[n],
+                              "backed_out": n in back})
         n = 0
         for b in batches:
             marks = [n + i in back for i in range(len(b.datums))]

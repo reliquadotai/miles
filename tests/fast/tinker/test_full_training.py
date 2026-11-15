@@ -355,6 +355,8 @@ async def test_failed_replica_load_never_reaches_generation(monkeypatch):
         "overlap_param_gather",
         "use_precision_aware_optimizer",
         "debug_disable_optimizer",
+        # lab: the fused path flags grad_added_to_main_grad, which a later fp32-head command would then skip
+        "gradient_accumulation_fusion",
     ],
 )
 def test_full_launch_rejects_incompatible_training_modes(unsupported):

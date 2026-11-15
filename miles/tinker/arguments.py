@@ -18,6 +18,9 @@ def configure_tinker_args(args):
         assert flag("bf16") and not flag("fp16"), "Tinker full training currently requires BF16"
         assert flag("loss_scale") in (None, 1.0), "Tinker full training requires unit loss scaling"
         assert flag("optimizer") == "adam", "Tinker optim_step supplies Adam parameters"
+        # the fused path marks grad_added_to_main_grad, and gradients now accumulate across commands without a
+        # buffer zeroing: a later fp32-head (gumbel_match/reliquary_gate) command would lose its output-layer grad
+        assert not flag("gradient_accumulation_fusion"), "Tinker full training requires --no-gradient-accumulation-fusion"
         assert not flag("calculate_per_token_loss"), "Tinker loss inputs already contain client normalization"
         assert (
             flag("use_dynamic_batch_size") or flag("micro_batch_size") == 1
