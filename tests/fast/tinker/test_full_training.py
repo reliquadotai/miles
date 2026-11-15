@@ -116,19 +116,28 @@ async def test_full_runtime_preserves_targets_and_omits_adapter_routing():
 
 
 class NativeOptimizerShape:
-    """The native optimizer interface over a real CPU Adam and fresh per-pass gradients."""
+    """The native optimizer interface over a real CPU Adam. ``backward`` adds into a persistent buffer, like
+    Megatron's DDP ``main_grad``; ``finalize`` stands for the one reduction per step; ``prepare_grads`` exposes
+    the buffer as ``.grad`` without copying it."""
 
     def __init__(self, parameter):
         self.parameter = parameter
         self.inner = torch.optim.Adam([parameter])
         self.param_groups = self.inner.param_groups
-        self.next_gradient = None
+        self.buffer = torch.zeros_like(parameter)
+        self.finalized = 0
+
+    def backward(self, gradient):
+        self.buffer.add_(gradient)
+
+    def finalize(self):
+        self.finalized += 1
 
     def get_parameters(self):
         return [self.parameter]
 
     def prepare_grads(self):
-        self.parameter.grad = self.next_gradient.clone()
+        self.parameter.grad = self.buffer
         return False
 
     def get_grad_norm(self):
@@ -140,6 +149,7 @@ class NativeOptimizerShape:
 
     def zero_grad(self):
         self.inner.zero_grad(set_to_none=True)
+        self.buffer.zero_()
 
 
 @pytest.mark.parametrize("clip", [0.0, 0.5])
@@ -147,16 +157,15 @@ def test_accumulation_matches_one_adam_update_on_the_sum(clip):
     p = torch.nn.Parameter(torch.tensor([1.0, 2.0]))
     reference = torch.nn.Parameter(p.detach().clone())
     native = NativeOptimizerShape(p)
-    accumulator = GradientAccumulator(native)
+    accumulator = GradientAccumulator(native, finalize=native.finalize)
     adam = dict(ADAM, grad_clip_norm=clip, learning_rate=0.01, weight_decay=0.1)
     ref_optimizer = torch.optim.Adam(
         [reference], lr=adam["learning_rate"], betas=(adam["beta1"], adam["beta2"]), eps=adam["eps"], weight_decay=0.1
     )
-    for _ in range(2):
+    for step in range(2):
         for gradient in (torch.tensor([3.0, -2.0]), torch.tensor([-1.0, 7.0])):
-            native.next_gradient = gradient
+            native.backward(gradient)
             accumulator.add()
-            native.zero_grad()
         reference.grad = torch.tensor([2.0, 5.0])
         expected_norm = float(reference.grad.norm())
         if clip:
@@ -165,15 +174,41 @@ def test_accumulation_matches_one_adam_update_on_the_sum(clip):
         outcome = accumulator.step(adam)
         assert outcome["grad_norm"] == pytest.approx(expected_norm)
         torch.testing.assert_close(p, reference, rtol=0, atol=0)
-        assert not accumulator.gradients and accumulator.num_batches == 0
+        assert native.finalized == step + 1  # one reduction per optimizer step, not per command
+        assert accumulator.num_batches == 0 and not native.buffer.any()
         assert "error" in accumulator.step(adam)
+
+
+def test_accumulator_holds_no_gradient_copy():
+    p = torch.nn.Parameter(torch.tensor([1.0, 2.0]))
+    native = NativeOptimizerShape(p)
+    accumulator = GradientAccumulator(native, finalize=native.finalize)
+    native.backward(torch.tensor([1.0, 1.0]))
+    accumulator.add()
+    assert not [v for v in vars(accumulator).values() if isinstance(v, (torch.Tensor, dict)) and len(v)]
+
+
+def test_failed_command_poisons_the_step():
+    p = torch.nn.Parameter(torch.tensor([1.0]))
+    native = NativeOptimizerShape(p)
+    accumulator = GradientAccumulator(native, finalize=native.finalize)
+    native.backward(torch.tensor([2.0]))
+    accumulator.add()
+    native.backward(torch.tensor([5.0]))  # a command that raised midway: part of its gradient is in the buffer
+    accumulator.poison()
+    assert "error" in accumulator.step(ADAM)
+    assert p.item() == 1.0 and not native.inner.state and native.finalized == 0
+    assert not native.buffer.any() and accumulator.num_batches == 0
+    native.backward(torch.tensor([3.0]))  # the next step starts clean
+    accumulator.add()
+    assert accumulator.step(ADAM)["grad_norm"] == pytest.approx(3.0)
 
 
 def test_nonfinite_gradients_do_not_change_weights_or_adam_state():
     p = torch.nn.Parameter(torch.tensor([1.0]))
     native = NativeOptimizerShape(p)
-    accumulator = GradientAccumulator(native)
-    native.next_gradient = torch.tensor([float("nan")])
+    accumulator = GradientAccumulator(native, finalize=native.finalize)
+    native.backward(torch.tensor([float("nan")]))
     accumulator.add()
     assert accumulator.step(ADAM) == {"skipped_nonfinite": 1}
     assert p.item() == 1.0 and not native.inner.state

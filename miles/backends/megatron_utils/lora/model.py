@@ -24,7 +24,10 @@ def run_forward_backward(
     rollout_data: RolloutBatch,
     *,
     forward_only: bool = False,
+    defer_grad_sync: bool = False,
 ) -> dict:
+    """``defer_grad_sync``: the backward only adds into the DDP buffer (no reduction, no snapshot of earlier
+    commands); the caller reduces once before its optimizer step (full training, which cannot afford a copy)."""
     data_iterator, num_microbatches = get_data_iterator(args, model, rollout_data)
     assert len(num_microbatches) == 1, "a work unit is a single forward/backward pass"
 
@@ -33,10 +36,13 @@ def run_forward_backward(
     for model_chunk in model:
         model_chunk.train()
     # disable_optimizer: bf16 loss scaling is the identity, so the pass needs no optimizer
-    setup_train_iteration_config(args, model, None, disable_optimizer=True)
+    config = setup_train_iteration_config(args, model, None, disable_optimizer=True)
+    if defer_grad_sync:
+        assert not args.backend.overlap_grad_reduce, "deferred grad sync reduces once, in the optimizer step"
+        config.finalize_model_grads_func = None
 
     dumper_phase_util = DumperMegatronUtil(args, model, DumperPhase.FWD_BWD, rollout_id=batch_id)
-    with nullcontext() if forward_only else accumulate_gradients(model):
+    with nullcontext() if forward_only or defer_grad_sync else accumulate_gradients(model):
         losses_reduced = run_forward_backward_pass(
             args,
             dumper_phase_util,

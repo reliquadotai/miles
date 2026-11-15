@@ -17,6 +17,7 @@ from miles.backends.megatron_utils.full_training import checkpoint
 from miles.backends.megatron_utils.full_training.optimizer import GradientAccumulator
 from miles.backends.megatron_utils.hf_export import save_hf_model
 from miles.backends.megatron_utils.lora.model import run_forward_backward
+from miles.backends.megatron_utils.model import finalize_model_grads_with_empty_cache
 from miles.backends.megatron_utils.optimizer_state_reset import reset_optimizer_states
 from miles.backends.training_utils.checkpoint.adapter.commit import UncommittedAdapterDir, write_adapter_dir
 from miles.backends.training_utils.checkpoint.adapter.parametrization import PARAMETRIZATION_FILENAME
@@ -49,7 +50,9 @@ def _is_rank0() -> bool:
 class FullTrainingRayActor(MegatronTrainRayActor):
     def _init_training_state(self) -> None:
         self._init_weight_updater_and_publisher(update_weights=False, publish_snapshots=True)
-        self.accumulator = GradientAccumulator(self.optimizer)
+        self.accumulator = GradientAccumulator(
+            self.optimizer, finalize=lambda: finalize_model_grads_with_empty_cache(self.model)
+        )
         self.model_is_active = False
         self.model_is_pristine = True
 
@@ -94,8 +97,19 @@ class FullTrainingRayActor(MegatronTrainRayActor):
     def _execute_batch(self, batch_id: int, rollout_data_ref: StoreObjectRef, *, forward_only: bool) -> dict:
         assert self.model_is_active
         self._heartbeat.bump()
+        # gradients accumulate in the DDP buffer across commands, zeroed only by optim_step / slot changes
+        try:
+            result = self._run_batch(batch_id, rollout_data_ref, forward_only=forward_only)
+        except BaseException:
+            if not forward_only:
+                self.accumulator.poison()
+            raise
         if not forward_only:
-            self._zero_grads()
+            self.accumulator.add()
+        self.prof.step(rollout_id=batch_id)
+        return result
+
+    def _run_batch(self, batch_id: int, rollout_data_ref: StoreObjectRef, *, forward_only: bool) -> dict:
         with ExitStack() as stack:
             rollout_data, store_get_result = get_rollout_data(
                 args=self.args,
@@ -105,13 +119,9 @@ class FullTrainingRayActor(MegatronTrainRayActor):
                 token_space_processor=self.token_space_processor,
             )
             stack.enter_context(store_get_result)
-            result = run_forward_backward(
-                self.args, batch_id, self.model, None, rollout_data, forward_only=forward_only
+            return run_forward_backward(
+                self.args, batch_id, self.model, None, rollout_data, forward_only=forward_only, defer_grad_sync=True
             )
-        if not forward_only:
-            self.accumulator.add()
-        self.prof.step(rollout_id=batch_id)
-        return result
 
     @with_logs
     def optim_step(self, adam_params_by_slot: dict[int, dict]) -> dict[int, dict]:
