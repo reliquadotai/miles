@@ -10,6 +10,10 @@ class TinkerConfig(BaseConfig):
         str | None,
         Arg(help="Model name advertised by the gateway (default: --hf-checkpoint)"),
     ] = None
+    tinker_grad_norm_skip: A[
+        float | None,
+        Arg(help="Full training: drop an optim_step whose gradient norm is over this (no update, skipped_grad_spike)"),
+    ] = None
     tinker_checkpoint_root: A[
         str | None,
         Arg(help="Directory for tinker:// checkpoints (required by serve_tinker.py)"),

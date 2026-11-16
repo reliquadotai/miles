@@ -147,6 +147,7 @@ async def test_optim_step_backs_out_rejected_groups_before_stepping():
     method, config, advantages = calls[1]
     assert config == {"replay": 1} and advantages == [[-1.0] * 3, [0.0] * 3]
     assert outcome[0]["gate_groups_rejected"] == 1 and outcome[0]["gate_rollouts_backed_out"] == 1
+    assert outcome[0]["gate_group_rejected/7"] == 1.0
     calls.clear()
     assert (await backend.optim_step({0: ADAM}))[0] == {"grad_norm": 1.0}  # the window was cleared
     assert [c[0] for c in calls] == ["optim_step"]

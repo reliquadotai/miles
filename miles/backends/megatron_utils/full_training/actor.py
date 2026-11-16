@@ -51,7 +51,8 @@ class FullTrainingRayActor(MegatronTrainRayActor):
     def _init_training_state(self) -> None:
         self._init_weight_updater_and_publisher(update_weights=False, publish_snapshots=True)
         self.accumulator = GradientAccumulator(
-            self.optimizer, finalize=lambda: finalize_model_grads_with_empty_cache(self.model)
+            self.optimizer, finalize=lambda: finalize_model_grads_with_empty_cache(self.model),
+            grad_norm_skip=getattr(self.args, "tinker_grad_norm_skip", None),
         )
         self.model_is_active = False
         self.model_is_pristine = True

@@ -229,6 +229,7 @@ def reliquary_gate_loss_function(args, batch, logits, sum_of_sample_mean):
         output["vstar"] = out["vstar"].cpu()
         output["match"] = out["match"].float().cpu()
         output["gap"] = out["gap"].cpu()
+        output["stochastic"] = out["stochastic"].float().cpu()
         output["gate"] = torch.tensor([float(ok), *map(float, tally), max_gap, -1.0 if last is None else last,
                                        float(n_sub)])
     return loss, log

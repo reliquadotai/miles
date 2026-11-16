@@ -308,7 +308,7 @@ def render_result(result: dict) -> dict:
 
 
 # optional per-datum loss outputs (gumbel_match) and their wire dtype
-EXTRA_OUTPUTS = {"vstar": "int64", "match": "float32", "gap": "float32", "gate": "float32"}
+EXTRA_OUTPUTS = {"vstar": "int64", "match": "float32", "gap": "float32", "stochastic": "float32", "gate": "float32"}
 
 
 def _tensor_json(values: list[float], dtype: str = "float32") -> dict:

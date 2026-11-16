@@ -31,6 +31,7 @@ class BackOutPlan:
     backed_out: int = 0
     replays: list = field(default_factory=list)  # (batch_id, [(slot, datum)], loss_fn_config)
     rows: list = field(default_factory=list)  # one per recorded rollout, for the pay ledger (gate_ledger)
+    rejected_ids: list = field(default_factory=list)  # the rejected groups' ids
 
 
 class GateWindow:
@@ -66,7 +67,8 @@ class GateWindow:
         groups = list(by_group.values())
         accepted = judge(groups, tallies, admitted)
         back = {n for g, ok in zip(groups, accepted, strict=True) if not ok for n in g if admitted[n]}
-        plan = BackOutPlan(groups=len(groups), rejected=accepted.count(False), backed_out=len(back))
+        plan = BackOutPlan(groups=len(groups), rejected=accepted.count(False), backed_out=len(back),
+                           rejected_ids=[gid for gid, ok in zip(by_group, accepted, strict=True) if not ok])
         group_ok = {n: ok for g, ok in zip(groups, accepted, strict=True) for n in g}
         for n, ((b, i), verdict) in enumerate(zip(rows, verdicts, strict=True)):
             plan.rows.append({"batch_id": b.batch_id, "index": i, "group_id": int(b.datums[i]["group_ids"][0]),
@@ -86,3 +88,13 @@ def _backed_out(datum: dict, output: dict, back: bool) -> dict:
     """``datum`` at negated advantages (or zero), scored on the first pass's v*."""
     advantages = [-float(a) if back else 0.0 for a in datum["advantages"]]
     return datum | {"advantages": advantages, "target_tokens": [int(v) for v in output["vstar"]]}
+
+
+def step_gate_metrics(plan: BackOutPlan) -> dict:
+    """``optim_step`` metrics of a slot's gate window: counts, and ``gate_group_rejected/<id>`` per rejected group
+    (the client reports pay from these, never from its own re-judgement)."""
+    if not plan.groups:
+        return {}
+    return {"gate_groups": plan.groups, "gate_groups_rejected": plan.rejected,
+            "gate_rollouts_backed_out": plan.backed_out,
+            **{f"gate_group_rejected/{gid}": 1.0 for gid in plan.rejected_ids}}

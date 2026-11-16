@@ -23,6 +23,7 @@ def record_step_verdicts(slot: int, rows: list[dict], outcome: dict) -> None:
     if not path or not rows:
         return
     now, stepped = time.time(), "error" not in outcome and not outcome.get("skipped_nonfinite")
+    stepped = stepped and not outcome.get("skipped_grad_spike")
     with open(path, "a") as handle:
         for row in rows:
             line = {"time": now, "slot": slot, "stepped": stepped, **{k: _finite(v) for k, v in row.items()}}

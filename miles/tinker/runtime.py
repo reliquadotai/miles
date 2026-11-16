@@ -26,7 +26,7 @@ from miles.backends.training_utils.checkpoint.adapter.parametrization import (
 )
 from miles.ray.rollout.train_data_conversion import ROLLOUT_DATA_VALUE_SPEC
 from miles.tinker.core.gate_ledger import record_step_verdicts
-from miles.tinker.core.gate_window import GateWindow
+from miles.tinker.core.gate_window import GateWindow, step_gate_metrics
 from miles.tinker.core.types import OwnershipError, UserInputError
 from miles.tinker.core.utils import PRE_COMMIT_META_FILENAME, list_checkpoint_files
 from miles.utils import object_store
@@ -284,9 +284,7 @@ class MilesBackend:
                 if isinstance(result, dict) and "error" in result:
                     failed[slot] = {"error": f"group back-out failed: {result['error']}"}
                     break
-            if plan.groups:
-                gate_metrics[slot] = {"gate_groups": plan.groups, "gate_groups_rejected": plan.rejected,
-                                      "gate_rollouts_backed_out": plan.backed_out}
+            gate_metrics[slot] = step_gate_metrics(plan)
         stepped = {slot: adam for slot, adam in adam_params_by_slot.items() if slot not in failed}
         results = dict(failed)
         if stepped:

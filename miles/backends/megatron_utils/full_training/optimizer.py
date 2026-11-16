@@ -12,8 +12,10 @@ import torch
 
 
 class GradientAccumulator:
-    def __init__(self, optimizer, finalize: Callable[[], None]) -> None:
+    def __init__(self, optimizer, finalize: Callable[[], None], grad_norm_skip: float | None = None) -> None:
         self.optimizer = optimizer
+        # a step whose gradient norm is over this is dropped (no update): the trainer's health gate
+        self.grad_norm_skip = grad_norm_skip
         self.finalize = finalize
         self.num_batches = 0
         self.poisoned = False
@@ -45,6 +47,9 @@ class GradientAccumulator:
         if not math.isfinite(grad_norm):
             self.clear()
             return {"skipped_nonfinite": 1}
+        if self.grad_norm_skip is not None and grad_norm > self.grad_norm_skip:
+            self.clear()
+            return {"skipped_grad_spike": 1, "grad_norm": grad_norm}
         if adam["grad_clip_norm"] > 0:
             coefficient = min(1.0, adam["grad_clip_norm"] / (grad_norm + 1e-6))
             for param in self.optimizer.get_parameters():
