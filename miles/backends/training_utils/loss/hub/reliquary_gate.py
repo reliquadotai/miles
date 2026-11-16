@@ -130,6 +130,12 @@ def rollout_verdict(tally, max_gap: float, last_gap: float | None, ends_on_eos: 
     return rollout_rate(tally) >= rollout_floor and max_gap <= gap_tolerance and not bad_terminal
 
 
+def ends_on_eos(targets, eos, config) -> bool:
+    """The final-EOS test's subject: a rollout ending on one of ``eos``, unless the batch's config turns the test off
+    (``terminal_check`` 0: multi-turn episodes, whose last assistant EOS is not a cut-short end)."""
+    return bool(config.get("terminal_check", 1)) and bool(len(targets)) and int(targets[-1]) in eos
+
+
 def judge_groups(groups, tallies, admitted, *, group_floor: float = RL_GROUP_MATCH_FLOOR,
                  forgery_floor: float = RL_FORGERY_MATCH_FLOOR) -> list[bool]:
     """``DrawGate.judge``'s acceptance: some rollout admitted, pooled match over the floor, none forged."""
@@ -144,7 +150,7 @@ def judge_groups(groups, tallies, admitted, *, group_floor: float = RL_GROUP_MAT
 def reliquary_gate_loss_function(args, batch, logits, sum_of_sample_mean):
     """Miles Tinker loss. Datum inputs: ``draw_keys`` (int64), ``draw_mask`` (1 where the miner drew), ``advantages``,
     ``logprobs`` (ignored: pi_old is the policy). Config: ``eos_ids`` ("a,b"), ``min_match`` (a client may only
-    raise the rollout floor), ``temperature``."""
+    raise the rollout floor), ``temperature``, ``terminal_check`` (0: no final-EOS test, episodes)."""
     from miles.backends.training_utils.loss.hub import tinker_losses as tl
     from miles.backends.training_utils.loss.hub.gumbel_match import true_vocab_size
     from miles.backends.training_utils.loss.hub.logit_processors import get_responses
@@ -205,8 +211,7 @@ def reliquary_gate_loss_function(args, batch, logits, sum_of_sample_mean):
         drawn = torch.as_tensor(list(mask), device=device) > 0
         tally = rollout_tally(out["match"], out["stochastic"], drawn)
         max_gap, subs, last = rollout_suspects(out["gap"], out["vstar"], out["match"], drawn, stop_ids=eos)
-        ends_on_eos = bool(len(targets)) and int(targets[-1]) in eos
-        ok = rollout_verdict(tally, max_gap, last, ends_on_eos, rollout_floor=floor)
+        ok = rollout_verdict(tally, max_gap, last, ends_on_eos(targets, eos, config), rollout_floor=floor)
         verdicts.append((ok, tally, max_gap, last, len(subs)))
 
     # 3) substitution loss: score v*, ratio 1 (pi_old = the policy), refused rollouts contribute nothing

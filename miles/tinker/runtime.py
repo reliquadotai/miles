@@ -29,6 +29,7 @@ from miles.tinker.core.gate_ledger import record_step_verdicts
 from miles.tinker.core.gate_window import GateWindow, step_gate_metrics
 from miles.tinker.core.types import OwnershipError, UserInputError
 from miles.tinker.core.utils import PRE_COMMIT_META_FILENAME, list_checkpoint_files
+from miles.tinker.server.encoding import EXTRA_OUTPUTS
 from miles.utils import object_store
 from miles.utils.http_utils import post
 from miles.utils.lora.hf_lora_targets import GDN_IN_PROJ_COMPONENTS_BY_MODULE, HfLoraTargets
@@ -253,7 +254,7 @@ class MilesBackend:
                     by_index[index] = {
                         "loss": float(datum_output["loss"]),
                         "logprobs": datum_output["logprobs"].tolist(),
-                        **{key: datum_output[key].tolist() for key in ("vstar", "match", "gap", "gate") if key in datum_output},
+                        **{key: datum_output[key].tolist() for key in EXTRA_OUTPUTS if key in datum_output},
                     }
         outputs = [by_index[index] for index in range(len(slot_datums))]
         if loss_fn == "reliquary_gate":
